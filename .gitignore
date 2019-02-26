@@ -1,0 +1,5 @@
+private_file.txt
+
+*__pycache__/*
+
+*ipynb
