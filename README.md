@@ -1,5 +1,7 @@
-# how2git
-Tutorial for git and GitHub
+# how2conjoint
+Git and GitHub for Quantitative Research Projects
+
+**Objective**: to develop discrete choice models with Stan, Python, and R
 
 ### Organization of this Repository
 + `Code`: contains model code and utility files
@@ -9,3 +11,4 @@ Tutorial for git and GitHub
 
 ### Example
 Coming soon!
+
