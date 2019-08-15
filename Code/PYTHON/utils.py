@@ -5,50 +5,10 @@ import pandas as pd
 from itertools import product, combinations
 
 
-def pathology(beta, kind="none", prob=[.5, .5]):
-    # apply the pathologies
-    if kind == 'none':
-        pass
-    elif kind == 'ANA':
-        beta *= np.random.choice([1, 0], size=len(beta), p=prob)
-    elif kind == 'screening':
-        beta[-3:] -= 100
-    elif kind == 'exponential':
-        beta = np.random.exponential(size=len(beta))
-    elif kind == 'screening_random':
-        if int(np.random.choice([1,0], p=prob)):
-            i = np.random.randint(len(beta))
-            beta[i] = -10000
-    elif kind == 'ANA_systematic':
-        pathology_vector = np.ones_like(beta)
-        pathology_vector[int(len(beta)//2):] = 0
-        beta *= pathology_vector
-    elif kind == 'ANA_random':
-        if int(np.random.choice([1, 0], p=prob)):
-            pathology_vector = np.ones_like(beta)
-            pathology_vector[:int(len(beta)//2)] = 0
-            beta *= pathology_vector
-    elif kind == 'basic':
-        beta = pathology(beta, kind='ANA')
-        beta = pathology(beta, kind='screening')
-    elif kind == 'all':
-        # ANA
-        if int(np.random.choice([1,0], p=prob)):
-            beta *= np.random.choice([1, 0], size=len(beta), p=prob)
-        # Screening
-        if int(np.random.choice([0,1], p=prob)):
-            beta[-3:] -= 100
-        if int(np.random.choice([0,1], p=prob)):
-            beta *= np.random.uniform(-10, 10, size=len(beta))
-        if int(np.random.choice([0,1], p=prob)):
-            beta = np.random.laplace(size=len(beta))
-        if int(np.random.choice([0,1], p=prob)):
-            beta += np.random.exponential(size=len(beta))
-
-    return beta
-
-
-def generate_factorial_design(nresp, nalt, nlvls):
+def generate_factorial_design(nresp, nalt, nlvls, ncovs=1):
+    """
+    Generates a factorial design.
+    """
     P = []
     C = []
     for p in product([0,1], repeat=nlvls):
@@ -67,14 +27,17 @@ def generate_factorial_design(nresp, nalt, nlvls):
                  'Z':Z,
                  'A':nalt,
                  'R':nresp,
-                 'C':1,
+                 'C':ncovs,
                  'T':C.shape[0],
                  'L':nlvls}
 
     return data_dict
 
 
-def generate_simulated_design():
+def generate_simulated_design(nresp, ntask, nalts, nlvls, ncovs=1):
+    """
+    Generates a simulated design
+    """
     # X is the experimental design
     X = np.zeros((nresp, ntask, nalts, nlvls))
     # Z is a matrix for demographic attributes
@@ -86,7 +49,8 @@ def generate_simulated_design():
             raise NotImplementedError
     
         for scn in range(ntask):
-            X_scn = np.random.choice([0,1], p =[.5,.5], size=nalts*nlvls).reshape(nalts,nlvls)
+            X_scn = np.random.uniform(0,1,size=nalts*nlvls).reshape(nalts, nlvls)
+            #X_scn = np.random.choice([0,1], p =[.5,.5], size=nalts*nlvls).reshape(nalts,nlvls)
             X[resp, scn] += X_scn
     
         Z[:, resp] += z_resp
@@ -102,7 +66,10 @@ def generate_simulated_design():
     return data_dict
 
 
-def compute_beta_response(data_dict, pathology_type=None, add_noise=True):
+def compute_beta_response(data_dict, add_noise=True):
+    """
+    Computes the parameters Beta and response Y given design X.
+    """
 
     # beta means
     Gamma = np.random.uniform(-3,4,size=data_dict['C'] * data_dict['L'])
@@ -121,8 +88,6 @@ def compute_beta_response(data_dict, pathology_type=None, add_noise=True):
             raise NotImplementedError
     
         beta = np.random.multivariate_normal(Gamma, Vbeta)
-        if pathology_type:
-            beta = pathology(beta, kind=pathology_type)
     
         for scn in range(data_dict['T']):
             X_scn = data_dict['X'][resp, scn]
@@ -141,13 +106,8 @@ def compute_beta_response(data_dict, pathology_type=None, add_noise=True):
     return data_dict
 
 
-def generate_simulated_data(pathology_type="none"):
-    data_dict = generate_simulated_design()
-    data_dict = compute_beta_response(data_dict, pathology_type=pathology_type)
-    return data_dict
 
-
-def get_model(model_name='mnl_vanilla'):
+def get_model(model_name='hbmnl'):
 
     with open('../STAN/{0}.stan'.format(model_name), 'r') as f:
         stan_model = f.read()
@@ -168,43 +128,11 @@ def fit_model_to_data(model, data, **kwargs):
     return model.sampling(data, **kwargs)
 
 
-def get_data(path_to_data, holdout=5):
-    """
-    1. get X.csv and Y.csv
-    2. reformat data into ndarrays
-    3. split into Xtrain, Ytrain, Xtest, Ytest (take out some choice tasks)
-    4. save as dictionary of arrays X,Y,Xtrain,Ytrain,Xtest,Ytest
-    """
-
-    # dictionary to store the ndarrays
-    data_dict = dict()
-
-    # read in csv files and reformat
-    Xdf = pd.read_csv(path_to_data + "X.csv")
-    Ydf = pd.read_csv(path_to_data + "Y.csv")
-
-    # determine data dimensions
-    nresp = Xdf['resp'].max()
-    ntask = Xdf['task'].max()
-    nalts = Xdf['alt'].max()
-    nlvls = len(Xdf.columns) - 3
-
-    # format X and Y
-    X = Xdf.drop(['resp','task','alt'],axis=1).values
-    Y = Ydf.drop(['resp'],axis=1).values
-    X = X.reshape((nresp,ntask,nalts,nlvls))
-    Y = Y.astype(np.int64).reshape((nresp,ntask))
-
-    # store X and Y in dictionary
-    data_dict['X'] = X
-    data_dict['Y'] = Y
-
-    # store training and test sets
-    data_dict['Xtrain'] = X[:,:-holdout,:,:]
-    data_dict['Ytrain'] = Y[:,:-holdout]
-    data_dict['Xtest'] = X[:,-holdout:,:,:]
-    data_dict['Ytest'] = Y[:,-holdout:]
-
+def partition_train_test(data_dict, holdout=5):
+    data_dict['Xtrain'] = data_dict['X'][:,:-holdout,:,:].copy()
+    data_dict['Ytrain'] = data_dict['Y'][:,:-holdout].copy()
+    data_dict['Xtest'] = data_dict['X'][:,-holdout:,:,:].copy()
+    data_dict['Ytest'] = data_dict['Y'][:,-holdout:].copy()
     return data_dict
 
 

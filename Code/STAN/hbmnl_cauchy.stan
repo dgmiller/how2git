@@ -35,7 +35,7 @@ transformed parameters {
 model {
   //priors
   to_vector(alpha) ~ normal(alpha_mean, alpha_scale);
-  to_vector(mu) ~ normal(mu_mean, mu_scale);
+  to_vector(mu) ~ cauchy(mu_mean, mu_scale);
   L_Omega ~ lkj_corr_cholesky(lkj_param);
 
 

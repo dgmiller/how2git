@@ -5,21 +5,17 @@ data {
   int<lower=2> A; // Number of product alternatives per choice task.
   int<lower=1> L; // Number of (estimable) attribute levels.
   int<lower=1> C; // Number of respondent-level covariates.
-  int<lower=1> Rtest;
-  int<lower=1> Ttest;
   
 
   matrix[A, L] X[R, T];          // Array of experimental designs per choice task.
   int<lower=1, upper=A> Y[R, T]; // Matrix of observed choices.
   matrix[R, C] Z;                // Matrix of respondent-level covariates.
 
-  matrix[A, L] Xtest[Rtest, Ttest]; // test design matrix
-
   real mu_mean;           // Mean of coefficients for the heterogeneity model.
   real<lower=0> mu_scale; // Scale of coefficients for the heterogeneity model.
-  real tau_mean;             // Mean of scale parameters for the heterogeneity model.
-  real<lower=0> tau_scale;   // Scale of scale parameters for the heterogeneity model.
-  real<lower=0> Omega_shape; // Shape of correlation matrix for the heterogeneity model.
+  real alpha_mean;             // Mean of scale parameters for the heterogeneity model.
+  real<lower=0> alpha_scale;   // Scale of scale parameters for the heterogeneity model.
+  real<lower=0> lkj_param; // Shape of correlation matrix for the heterogeneity model.
 }
 
 parameters {
@@ -38,8 +34,8 @@ transformed parameters {
 model {
   // Hyperpriors on mu, tau, and Omega (and thus Sigma).
   to_vector(mu) ~ normal(mu_mean, mu_scale);
-  tau ~ cauchy(tau_mean, tau_scale);
-  Omega ~ lkj_corr(Omega_shape);
+  tau ~ cauchy(alpha_mean, alpha_scale);
+  Omega ~ lkj_corr(lkj_param);
   
   // Hierarchical multinomial logit.
   for (r in 1:R) {
@@ -52,22 +48,11 @@ model {
 
 generated quantities {
   // Yp is predicted choices for new data.
-  int<lower=0, upper=A> Yhat[Rtest, Ttest];
-  int<lower=0, upper=1> Yc[Rtest, Ttest, A];
-  vector[L] B_avg;
+  int<lower=0, upper=A> Yhat[R, T];
 
-  for (r in 1:Rtest) {
-    for (t in 1:Ttest) {
-      for (l in 1:L) B_avg[l] = mean(B[,l]);
-      Yhat[r, t] = categorical_logit_rng(Xtest[r, t]*B_avg);
-      for (a in 1:A) {
-        if (Yhat[r, t] == a) {
-          Yc[r, t, a] = 1;
-        }
-        else {
-          Yc[r, t, a] = 0;
-        }
-      }
+  for (r in 1:R) {
+    for (t in 1:T) {
+      Yhat[r, t] = categorical_logit_rng(X[r, t]*B[r]');
     }
   }
 }

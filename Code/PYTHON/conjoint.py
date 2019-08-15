@@ -1,12 +1,17 @@
 import numpy as np
+import scipy as sp
 import pandas as pd
 import utils
 import time
+import ensemble
+
+import matplotlib.pyplot as plt
+from matplotlib import animation
 
 
-def hbmnl(data_dict, mu=(0,1), alpha=(0,10), lkj_param=2, return_fit=False, **kwargs):
+def hbmnl(data_dict, mu=(0,1), alpha=(0,10), lkj_param=2, return_fit=False, model_name='hbmnl', **kwargs):
     """
-    Hierarchical Bayesian Multi-Nomial Logit for conjoint analysis.
+    Hierarchical Bayesian Multi-Nomial Logit for discrete choice experiements.
 
     INPUT
         data_dict (dict)
@@ -24,8 +29,6 @@ def hbmnl(data_dict, mu=(0,1), alpha=(0,10), lkj_param=2, return_fit=False, **kw
     nresp = data_dict['X'].shape[0]
     nalts = data_dict['X'].shape[2]
     nlvls = data_dict['X'].shape[3]
-    nresp_train = data_dict['Xtrain'].shape[0]
-    nresp_test = data_dict['Xtest'].shape[0]
     ntask_train = data_dict['Xtrain'].shape[1]
     ntask_test = data_dict['Xtest'].shape[1]
     N = nresp*ntask_train
@@ -35,9 +38,8 @@ def hbmnl(data_dict, mu=(0,1), alpha=(0,10), lkj_param=2, return_fit=False, **kw
             'A':nalts,
             'L':nlvls,
             'T':ntask_train,
-            'R':nresp_train,
+            'R':nresp,
             'C':1,
-            'Rtest':nresp_test,
             'Ttest':ntask_test,
             'X':data_dict['Xtrain'],
             'Y':data_dict['Ytrain'].astype(np.int64),
@@ -52,22 +54,98 @@ def hbmnl(data_dict, mu=(0,1), alpha=(0,10), lkj_param=2, return_fit=False, **kw
     
     
     # fit model to data
-    MODEL = utils.get_model(model_name='hbmnl')
+    MODEL = utils.get_model(model_name=model_name)
     FIT = utils.fit_model_to_data(MODEL, stan_data, **kwargs)
     
-    Yc = FIT.extract(pars=['Yc'])['Yc'].sum(axis=0).reshape((Ntest, nalts))
-    Yhat = np.argmax(Yc, axis=1) + 1
-    
-    hit_count = Ntest - np.count_nonzero(Yhat - data_dict['Ytest'].reshape(Ntest))
+    return FIT
 
-    # store results
-    results = dict()
-    results["SCORE"] = hit_count/Ntest
 
-    if return_fit:
-        return results, FIT
+def hbmnl_demo(nresp=2, ntask=10, nalts=2, nlvls=2, factorial=False, model='hbmnl'):
+    """
+    Demonstrates hbmnl on simulated data.
+    RETURNS
+        FIT (stan object) the fit stan model
+        data_dict (dict) the simulated data in a dictionary
+    """
+    if factorial:
+        data_dict = utils.generate_factorial_design(nresp, nalts, nlvls)
     else:
-        return results
+        data_dict = utils.generate_simulated_design(nresp, ntask, nalts, nlvls)
+    data_dict = utils.compute_beta_response(data_dict)
+    #data_dict = utils.partition_train_test(data_dict, holdout=2)
+    
+    data_dict['Xtrain'] = data_dict['X'].copy()
+    data_dict['Ytrain'] = data_dict['Y'].copy()
+    data_dict['Xtest'] = data_dict['X'].copy()
+    data_dict['Ytest'] = data_dict['Y'].copy()
+    
+    FIT = hbmnl(data_dict,
+                mu=[0,5],
+                alpha=[0,10],
+                lkj_param=5,
+                return_fit=True,
+                model_name=model,
+                iter=2000,
+                chains=4,
+                control={'adapt_delta':.9},
+                init_r=1)
+
+    Yhat = FIT.extract(pars=['Yhat'])['Yhat']
+    predictions = sp.stats.mode(Yhat)[0][0].astype(int)
+    print(predictions-data_dict['Y'])
+    num_errors = np.count_nonzero(predictions-data_dict['Y'])
+    print("ACCURACY: ", (len(data_dict['Y'].flatten()) - num_errors)/len(data_dict['Y'].flatten()))
+
+    return FIT, data_dict
+
+
+def ensemble_demo(nresp, ntask, nalts, nlvls):
+    data_dict = utils.generate_simulated_design(nresp, ntask, nalts, nlvls)
+    data_dict = utils.compute_beta_response(data_dict)
+    data_dict['Xtrain'] = data_dict['X'].copy()
+    data_dict['Ytrain'] = data_dict['Y'].copy()
+    data_dict['Xtest'] = data_dict['X'].copy()
+    data_dict['Ytest'] = data_dict['Y'].copy()
+
+    results = ensemble.ensemble(data_dict)
+    return results
+
+
+def plot01():
+    F, data = hbmnl_demo(nresp=2, ntask=15, nalts=2, nlvls=3, model='hbmnl')
+    print(F)
+    B = F.extract(pars=['B'])['B']
+    draws,nresp,nlvls = B.shape
+
+    fig,ax = plt.subplots(nrows=nresp, ncols=nlvls, figsize=(8,8))
+    for i in range(nresp):
+        for j in range(nlvls):
+            ax[i,j].hist(B[:,i,j], bins=75, color='grey', alpha=.8)
+            ax[i,j].axvline(x=data['B'].T[i,j], color='red')
+
+    plt.show()
+
+    fig,ax = plt.subplots(nrows=1, ncols=nresp, figsize=(12,8))
+    for i in range(nresp):
+        ax[i].scatter(B[:,i,0], B[:,i,1], color='grey', alpha=.1)
+        ax[i].scatter(data['B'].T[i,0], data['B'].T[i,1], marker='.', color='red')
+        ax[i].axis('equal')
+    plt.show()
+
+    B = F.extract(pars=['B'])['B']
+
+    fig, ax = plt.subplots(nrows=nresp, ncols=nlvls, sharex=True, sharey=True, figsize=(8,8))
+    for i in range(nresp):
+        for j in range(nlvls):
+            ax[i,j].plot(B[:,i,j].flatten(),'o', markersize=2)
+
+    plt.show()
+
+
+
+if __name__ == "__main__":
+    #plot01()
+    print(ensemble_demo(2, 15, 2, 3))
 
 
 
